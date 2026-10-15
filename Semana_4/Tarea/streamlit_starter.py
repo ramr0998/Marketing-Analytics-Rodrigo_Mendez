@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from sklearn.metrics.pairwise import cosine_similarity
+from pathlib import Path
 
 st.set_page_config(page_title="Recomendador — Laboratorio", page_icon="☕", layout="wide")
 
@@ -20,22 +21,36 @@ NARANJA = "#C4512F"
 GRIS = "#9A988E"
 
 
+
 @st.cache_data
 def cargar():
-    catalogo = pd.read_csv("data/catalogo.csv")
-    hist = pd.read_csv("data/ordenes_historial.csv")
-    hold = pd.read_csv("data/ordenes_holdout.csv")
-    exp = pd.read_csv("data/experimento.csv")
-    clientes = pd.read_csv("data/clientes.csv")
+    DATA_DIR = Path(__file__).resolve().parent / "data"
+
+    catalogo = pd.read_csv(DATA_DIR / "catalogo.csv")
+    hist = pd.read_csv(DATA_DIR / "ordenes_historial.csv")
+    hold = pd.read_csv(DATA_DIR / "ordenes_holdout.csv")
+    exp = pd.read_csv(DATA_DIR / "experimento.csv")
+    clientes = pd.read_csv(DATA_DIR / "clientes.csv")
+
     productos = list(catalogo["item"])
+
     M = (pd.crosstab(hist["customer_id"], hist["item"]) > 0).astype(int).reindex(
-        index=clientes["customer_id"], columns=productos, fill_value=0)
+        index=clientes["customer_id"], columns=productos, fill_value=0
+    )
+
     X = M.values.astype(np.float32)
+
     H = (pd.crosstab(hold["customer_id"], hold["item"]) > 0).astype(int).reindex(
-        index=M.index, columns=productos, fill_value=0).values
-    NUEVO = H * (1 - X)                                   # probó algo NUEVO en el holdout
+        index=M.index, columns=productos, fill_value=0
+    ).values
+
+    NUEVO = H * (1 - X)
     NUEVO[:, productos.index("Agua")] = 0
-    es_control = (exp.set_index("customer_id").loc[M.index, "grupo"] == "control").values
+
+    es_control = (
+        exp.set_index("customer_id").loc[M.index, "grupo"] == "control"
+    ).values
+
     return productos, M.index.values, X, NUEVO, es_control
 
 
