@@ -44,7 +44,8 @@ COL_AGUA = productos.index("Agua")
 popularidad = X.sum(axis=0)
 
 # TODO 1: la tabla de similitudes producto × producto (con la diagonal en 0), calculada UNA vez
-S_it = ...   # <-- reemplacen esto (cosine_similarity entre las columnas de X)
+S_it = cosine_similarity(X.T)
+np.fill_diagonal(S_it, 0)
 
 
 def puntajes(metodo, x_vec, K):
@@ -53,11 +54,12 @@ def puntajes(metodo, x_vec, K):
         return popularidad.astype(float)
     if metodo == "Filtrado por ítem":
         # TODO 2: suma de las similitudes de cada producto con lo que el cliente ya compró
-        return ...   # <-- reemplacen esto
+        return x_vec @ S_it
     # TODO 3: filtrado por cliente: similitud del cliente con TODOS los demás, sus K vecinos más parecidos
     #         y la suma de sus compras ponderada por esa similitud
     sims = cosine_similarity(x_vec[None, :], X)[0]
-    return ...       # <-- reemplacen esto
+    vecinos = np.argsort(-sims)[:K]
+    return sims[vecinos] @ X[vecinos]
 
 
 def top3(scores, x_vec):
@@ -68,14 +70,22 @@ def top3(scores, x_vec):
 
 # --- Título ---
 st.title("☕ Recomendador de productos")
-st.caption("TODO: escriban aquí una frase sobre qué decisión de negocio ayuda a tomar esta app.")
+st.caption("Ayuda a identificar qué productos recomendar a cada cliente según sus compras y las preferencias de clientes similares.")
 
 # TODO 4: barra lateral con los controles interactivos (mínimo UNO): un selector del método
 #         (st.selectbox) y un slider con el número de vecinos K (st.slider)
 with st.sidebar:
     st.header("Parámetros")
-    metodo = ...     # <-- reemplacen esto
-    K = ...          # <-- reemplacen esto
+    metodo = st.selectbox(
+    "Método de recomendación",
+    ["Popularidad", "Filtrado por ítem", "Filtrado por cliente"]
+)
+    K = st.slider(
+    "Número de vecinos",
+    min_value=5,
+    max_value=100,
+    value=30
+)
 
 tab1, tab2 = st.tabs(["Recomendar", "Comparar métodos"])
 
@@ -90,10 +100,87 @@ with tab1:
     #         - por cliente: "N de sus K vecinos más parecidos lo compraron"
     #         - popularidad: "es de lo más comprado"
     #         (y qué hacen con un cliente SIN historial: los métodos colaborativos dan puntaje 0)
+    if x_vec.sum() == 0 and metodo != "Popularidad":
+        scores = popularidad.astype(float)
+        metodo_usado = "Popularidad"
+        st.info("Cliente sin historial: recomendamos productos populares.")
+    else:
+        scores = puntajes(metodo, x_vec, K)
+        metodo_usado = metodo
 
+    recomendaciones = top3(scores, x_vec)
+
+    st.subheader("Top 3 recomendaciones")
+
+    for j in recomendaciones:
+
+        if metodo_usado == "Popularidad":
+            motivo = "Es uno de los productos más comprados."
+
+        elif metodo_usado == "Filtrado por ítem":
+            comprados = np.where(x_vec > 0)[0]
+            similar = comprados[np.argmax(S_it[j, comprados])]
+
+            motivo = (
+                f"Porque compró {productos[similar]} "
+                f"(similitud {S_it[j, similar]:.2f})."
+            )
+
+        else:
+            sims = cosine_similarity(x_vec[None, :], X)[0]
+            vecinos = np.argsort(-sims)[:K]
+
+            cantidad = int(X[vecinos, j].sum())
+
+            motivo = (
+                f"{cantidad} de sus {K} vecinos más parecidos "
+                "compraron este producto."
+            )
+
+        st.write(f"**{productos[j]}** — Puntaje: {scores[j]:.2f}")
+        st.caption(motivo)   
 with tab2:
     # TODO 6: tabla de comparación (hit rate@3 y cobertura de cada método) calculada sobre los clientes del grupo
     #         CONTROL que probaron algo nuevo (NUEVO.sum(axis=1) > 0 y es_control), con al menos un control
     #         interactivo (por ejemplo, un slider con cuántos clientes evaluar o el K del filtrado por cliente).
     #         Pista: es la misma lógica de hit_rate_at_k del notebook.
-    st.info("Reemplacen cada TODO con su propio código. Revisen el notebook del laboratorio para la lógica exacta de cada pieza.")
+    elegibles = np.where(es_control & (NUEVO.sum(axis=1) > 0))[0]
+
+    n_eval = st.slider(
+        "Número de clientes a evaluar",
+        min_value=50,
+        max_value=len(elegibles),
+        value=300
+    )
+
+    muestra = np.random.default_rng(42).choice(
+        elegibles, size=n_eval, replace=False
+    )
+
+    resultados = []
+
+    for nombre in ["Popularidad", "Filtrado por ítem", "Filtrado por cliente"]:
+
+        aciertos = []
+        recomendados = set()
+
+        for u in muestra:
+            scores = puntajes(nombre, X[u], K)
+            top = top3(scores, X[u])
+
+            aciertos.append(NUEVO[u, top].sum() > 0)
+            recomendados.update(top.tolist())
+
+        resultados.append({
+            "Método": nombre,
+            "Hit Rate@3 (%)": round(np.mean(aciertos) * 100, 2),
+            "Cobertura": len(recomendados)
+        })
+
+    tabla = pd.DataFrame(resultados)
+
+    st.subheader("Comparación de recomendadores")
+    st.dataframe(tabla, use_container_width=True)
+
+    st.subheader("Hit Rate@3 por método")
+    st.bar_chart(tabla.set_index("Método")["Hit Rate@3 (%)"])
